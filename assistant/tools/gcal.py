@@ -22,6 +22,12 @@ PROMPT_ADDON = """\
 если встречи из разных календарей, помечай откуда какая. если из одного — не уточняй, это шум.
 если просят «поставь встречу / добавь в календарь / создай зум» — вызови gcal_create_event
 (время в ISO). если сказали, в какой календарь («в рабочий») — передай его в calendar.
+если просят изменить существующее («переименуй», «перенеси на 15:00», «поменяй место») —
+сначала найди событие через gcal_today или gcal_upcoming, возьми оттуда event_id и
+calendar_id, потом вызови gcal_update_event и передай только то, что меняется.
+удалять события ты не умеешь — так и скажи, что это надо руками в календаре.
+не ври про сделанное: если инструмент вернул error, честно скажи, что не получилось,
+и не делай вид, что записала.
 иначе календарь сам не дёргай.
 """
 
@@ -58,6 +64,27 @@ TOOLS = [
                 },
             },
             "required": ["title", "start_time", "end_time"],
+        },
+    },
+    {
+        "name": "gcal_update_event",
+        "description": (
+            "Изменить существующее событие: переименовать, перенести, поменять место. "
+            "Сначала найди его через gcal_today или gcal_upcoming — оттуда возьми "
+            "event_id и calendar_id. Передавай только то, что меняется."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string", "description": "id события из gcal_today/gcal_upcoming"},
+                "calendar_id": {"type": "string", "description": "calendar_id оттуда же"},
+                "title": {"type": "string", "description": "Новое название"},
+                "start_time": {"type": "string", "description": "Новое начало, ISO"},
+                "end_time": {"type": "string", "description": "Новый конец, ISO"},
+                "description": {"type": "string"},
+                "location": {"type": "string"},
+            },
+            "required": ["event_id", "calendar_id"],
         },
     },
 ]
@@ -122,6 +149,9 @@ def _events_between(start: datetime, end: datetime) -> list[dict] | dict:
                 "start": e.get("start", {}).get("dateTime") or e.get("start", {}).get("date", ""),
                 "location": e.get("location", ""),
                 "calendar": cal["name"],
+                # Нужны, чтобы потом изменить событие: без них его не адресовать.
+                "event_id": e.get("id", ""),
+                "calendar_id": cal["id"],
             })
 
     if failed == len(calendars):
@@ -186,8 +216,50 @@ def _gcal_create_event(data: dict) -> dict:
         return {"error": str(exc)}
 
 
+def _gcal_update_event(data: dict) -> dict:
+    token = get_access_token()
+    if not token:
+        return {"error": "Google не авторизован — открой /google/auth у бота"}
+
+    # PATCH меняет только переданные поля — остальное в событии не трогаем.
+    body: dict = {}
+    if data.get("title"):
+        body["summary"] = data["title"]
+    if data.get("start_time"):
+        body["start"] = {"dateTime": data["start_time"], "timeZone": str(TIMEZONE)}
+    if data.get("end_time"):
+        body["end"] = {"dateTime": data["end_time"], "timeZone": str(TIMEZONE)}
+    if data.get("description"):
+        body["description"] = data["description"]
+    if data.get("location"):
+        body["location"] = data["location"]
+    if not body:
+        return {"error": "не сказано, что менять"}
+
+    cal = quote(data["calendar_id"], safe="")
+    ev = quote(data["event_id"], safe="")
+    try:
+        resp = httpx.patch(f"{API}/calendars/{cal}/events/{ev}", headers={
+            "Authorization": f"Bearer {token}",
+        }, params={"sendUpdates": "all"}, json=body, timeout=15)
+        resp.raise_for_status()
+        e = resp.json()
+        return {"updated": True, "title": e.get("summary", ""), "link": e.get("htmlLink", "")}
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            # Чаще всего это чужой календарь, отданный только на просмотр.
+            return {"error": "нет права менять события в этом календаре — "
+                             "он расшарен только на просмотр"}
+        logger.exception("ошибка изменения события")
+        return {"error": str(exc)}
+    except Exception as exc:
+        logger.exception("ошибка изменения события")
+        return {"error": str(exc)}
+
+
 HANDLERS = {
     "gcal_today": _gcal_today,
     "gcal_upcoming": _gcal_upcoming,
     "gcal_create_event": _gcal_create_event,
+    "gcal_update_event": _gcal_update_event,
 }
