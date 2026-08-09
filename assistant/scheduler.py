@@ -37,10 +37,16 @@ async def _do_checkin(checkin_prompt: str, label: str) -> None:
     if db.was_checkin_sent(label, today):
         logger.info("чекин '%s' уже был сегодня — пропускаю", label)
         return
+    # Историю подтягиваем так же, как в обычном разговоре. Без неё чекин
+    # шёл с чистого листа: Катя утром называла фокус дня, а бот в следующем
+    # плановом сообщении спрашивал о нём заново, будто не слышал.
+    history = db.get_recent_memory(limit=config.HISTORY_LIMIT)
+
     for attempt in range(3):
         try:
             text = await ask(
                 f"Сегодня {today}. Проведи {label} чекин.",
+                history=history,
                 is_checkin=True,
                 extra_system=checkin_prompt,
             )
@@ -72,6 +78,14 @@ async def run_catchup() -> None:
     if not _send:
         return
     now = datetime.now(config.TIMEZONE)
+
+    # Утро и вечер стоят в расписании на пн-пт. Досылка про это не знала:
+    # любой рестарт в выходной присылал «доброе утро» просто потому, что
+    # сегодня чекина ещё не было. Держим то же правило, что и в расписании.
+    if now.weekday() >= 5:  # 5 = суббота, 6 = воскресенье
+        logger.info("выходной — плановые чекины не досылаем")
+        return
+
     schedule = [
         (config.MORNING_HOUR, prompts.MORNING_CHECKIN, "утренний"),
         (config.EVENING_HOUR, prompts.EVENING_CHECKIN, "вечерний"),
