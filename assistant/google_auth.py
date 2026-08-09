@@ -29,6 +29,15 @@ GCAL_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 GCAL_LIST_SCOPE = "https://www.googleapis.com/auth/calendar.calendarlist.readonly"
 
 
+# Можно подключить два гугл-аккаунта: рабочий и личный. Почтовый ящик, в
+# отличие от календаря, расшарить нельзя — поэтому для второго ящика нужен
+# отдельный токен. Рабочий — ключ по умолчанию, его трогать нельзя: на нём
+# уже висит календарь.
+WORK = "google"
+PERSONAL = "google_personal"
+ACCOUNTS = (WORK, PERSONAL)
+
+
 def _scopes() -> list[str]:
     scopes = []
     if config.ENABLE_GMAIL:
@@ -39,8 +48,12 @@ def _scopes() -> list[str]:
     return scopes
 
 
-def get_auth_url() -> str:
-    """Ссылка, по которой пользователь разрешает доступ (открывается в браузере)."""
+def get_auth_url(account: str = WORK) -> str:
+    """Ссылка, по которой пользователь разрешает доступ (открывается в браузере).
+
+    account уезжает в Google как state и возвращается обратно в callback —
+    так мы понимаем, какому из двух ящиков принадлежит выданный токен.
+    """
     params = {
         "client_id": config.GOOGLE_CLIENT_ID,
         "redirect_uri": config.GOOGLE_REDIRECT_URI,
@@ -48,11 +61,12 @@ def get_auth_url() -> str:
         "scope": " ".join(_scopes()),
         "access_type": "offline",      # чтобы получить refresh_token
         "prompt": "consent",
+        "state": account,
     }
     return f"{AUTH_URL}?{urlencode(params)}"
 
 
-def exchange_code(code: str) -> None:
+def exchange_code(code: str, account: str = WORK) -> None:
     """Обменять код (из callback) на токены и сохранить их."""
     resp = httpx.post(TOKEN_URL, data={
         "code": code,
@@ -63,18 +77,20 @@ def exchange_code(code: str) -> None:
     }, timeout=15)
     resp.raise_for_status()
     tokens = resp.json()
-    _store(tokens["access_token"], tokens.get("refresh_token", ""), tokens.get("expires_in", 3600))
+    _store(tokens["access_token"], tokens.get("refresh_token", ""),
+           tokens.get("expires_in", 3600), account)
 
 
-def _store(access_token: str, refresh_token: str, expires_in: int) -> None:
+def _store(access_token: str, refresh_token: str, expires_in: int,
+           account: str = WORK) -> None:
     expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
-    data = {"key": "google", "access_token": access_token, "expires_at": expires_at}
+    data = {"key": account, "access_token": access_token, "expires_at": expires_at}
     if refresh_token:  # Google не всегда возвращает refresh_token при обновлении
         data["refresh_token"] = refresh_token
     supabase.table("oauth_tokens").upsert(data, on_conflict="key").execute()
 
 
-def _refresh(refresh_token: str) -> str | None:
+def _refresh(refresh_token: str, account: str = WORK) -> str | None:
     try:
         resp = httpx.post(TOKEN_URL, data={
             "grant_type": "refresh_token",
@@ -85,16 +101,27 @@ def _refresh(refresh_token: str) -> str | None:
         resp.raise_for_status()
         tokens = resp.json()
         _store(tokens["access_token"], tokens.get("refresh_token", refresh_token),
-               tokens.get("expires_in", 3600))
+               tokens.get("expires_in", 3600), account)
         return tokens["access_token"]
     except Exception:
-        logger.exception("не удалось обновить токен Google")
+        logger.exception("не удалось обновить токен Google (%s)", account)
         return None
 
 
-def get_access_token() -> str | None:
+def authorized_accounts() -> list[str]:
+    """Какие из аккаунтов реально подключены. Пустой список — ни одного."""
+    try:
+        rows = supabase.table("oauth_tokens").select("key").in_("key", list(ACCOUNTS)).execute().data
+        found = {r.get("key") for r in rows}
+        return [a for a in ACCOUNTS if a in found]  # порядок: сначала рабочий
+    except Exception:
+        logger.exception("не удалось прочитать список аккаунтов")
+        return [WORK]
+
+
+def get_access_token(account: str = WORK) -> str | None:
     """Действующий access token (обновляет сам, если истёк). None — если не авторизован."""
-    rows = supabase.table("oauth_tokens").select("*").eq("key", "google").limit(1).execute().data
+    rows = supabase.table("oauth_tokens").select("*").eq("key", account).limit(1).execute().data
     if not rows:
         return None
     tok = rows[0]
@@ -105,7 +132,7 @@ def get_access_token() -> str | None:
             if exp.tzinfo is None:
                 exp = exp.replace(tzinfo=timezone.utc)
             if datetime.now(timezone.utc) >= exp:
-                return _refresh(tok["refresh_token"])
+                return _refresh(tok["refresh_token"], account)
         except (ValueError, KeyError):
             pass
     return tok.get("access_token")

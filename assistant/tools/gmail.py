@@ -8,15 +8,21 @@ import logging
 
 import httpx
 
-from assistant.google_auth import get_access_token
+from assistant.google_auth import PERSONAL, authorized_accounts, get_access_token
 
 logger = logging.getLogger(__name__)
 API = "https://www.googleapis.com/gmail/v1"
+
+# Как называть ящики в ответах — по-человечески, а не ключами из базы.
+_NAMES = {PERSONAL: "личная почта"}
+_WORK_NAME = "рабочая почта"
 
 PROMPT_ADDON = """\
 МОДУЛЬ ПОЧТЫ включён (только чтение). в утреннем чекине, если уместно, можешь одной строкой
 упомянуть важные непрочитанные письма. отдельно показывай почту, только когда просят
 («что на почте», «есть важные письма»). не дёргай почту в каждом сообщении.
+ящиков может быть два — у каждого письма есть поле «ящик». если письма из обоих,
+помечай откуда какое. если из одного — не уточняй, это шум.
 """
 
 TOOLS = [
@@ -46,10 +52,12 @@ def _header(headers: list[dict], name: str) -> str:
     return ""
 
 
-def _list(query: str, max_results: int) -> list[dict]:
-    token = get_access_token()
+def _list_one(account: str, query: str, max_results: int) -> list[dict]:
+    """Письма из одного ящика. Ошибку не поднимаем — вернём пометку."""
+    token = get_access_token(account)
     if not token:
-        return [{"error": "Google не авторизован — открой /google/auth у бота"}]
+        return []
+    name = _NAMES.get(account, _WORK_NAME)
     auth = {"Authorization": f"Bearer {token}"}
     try:
         resp = httpx.get(f"{API}/users/me/messages",
@@ -63,14 +71,31 @@ def _list(query: str, max_results: int) -> list[dict]:
             }, timeout=15).json()
             headers = d.get("payload", {}).get("headers", [])
             out.append({
+                "ящик": name,
                 "from": _header(headers, "From"),
                 "subject": _header(headers, "Subject"),
                 "snippet": d.get("snippet", ""),
             })
         return out
     except Exception as exc:
-        logger.exception("ошибка Gmail")
-        return [{"error": str(exc)}]
+        logger.exception("ошибка Gmail (%s)", name)
+        return [{"ящик": name, "error": str(exc)}]
+
+
+def _list(query: str, max_results: int) -> list[dict]:
+    """Письма из всех подключённых ящиков. Один сломался — остальные покажем."""
+    accounts = authorized_accounts()
+    if not accounts:
+        return [{"error": "Google не авторизован — открой /google/auth у бота"}]
+
+    out = []
+    for account in accounts:
+        out.extend(_list_one(account, query, max_results))
+
+    if not out:
+        # Токены есть, но писем нет и ошибок не было — почта просто пустая.
+        return []
+    return out
 
 
 def _gmail_unread(data: dict) -> list[dict]:
