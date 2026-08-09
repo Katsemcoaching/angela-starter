@@ -60,6 +60,24 @@ def _messages_create(**kwargs):
     raise last_exc
 
 
+_DAYS_RU = ("понедельник", "вторник", "среда", "четверг",
+            "пятница", "суббота", "воскресенье")
+
+
+def _week_ahead(now: datetime) -> str:
+    """Готовые даты на неделю вперёд — чтобы модель не считала дни в уме.
+
+    Она в этом ошибается: 8 августа на вопрос «что в понедельник» ответила
+    «понедельник 11 августа», хотя понедельник был 10-го. Дату сегодняшнего
+    дня она получала верно — промахивалась именно на пересчёте вперёд.
+    """
+    days = []
+    for i in range(1, 8):
+        d = now + timedelta(days=i)
+        days.append(f"  {_DAYS_RU[d.weekday()]} = {d.strftime('%Y-%m-%d')}")
+    return "\n".join(days)
+
+
 def _system_blocks(module_addons: str, extra_system: str) -> list[dict]:
     """Системный промпт двумя блоками: статичный (кэшируется) + изменчивый (время)."""
     static = prompts.PERSONA
@@ -68,9 +86,12 @@ def _system_blocks(module_addons: str, extra_system: str) -> list[dict]:
 
     now = datetime.now(TIMEZONE)
     volatile = (
-        f"сейчас: {now.strftime('%Y-%m-%d %H:%M')}, {now.strftime('%A')}\n"
-        f"СЕГОДНЯ={now.strftime('%Y-%m-%d')}\n"
-        f"ЗАВТРА={(now + timedelta(days=1)).strftime('%Y-%m-%d')}"
+        f"сейчас: {now.strftime('%Y-%m-%d %H:%M')}, {_DAYS_RU[now.weekday()]}\n"
+        f"СЕГОДНЯ={now.strftime('%Y-%m-%d')} ({_DAYS_RU[now.weekday()]})\n"
+        f"ЗАВТРА={(now + timedelta(days=1)).strftime('%Y-%m-%d')}\n"
+        f"следующие 7 дней (сегодняшний день сюда НЕ входит) —\n"
+        f"когда называешь будущий день недели, бери дату отсюда, не вычисляй:\n"
+        f"{_week_ahead(now)}"
     )
     if extra_system:
         volatile += "\n\n" + extra_system

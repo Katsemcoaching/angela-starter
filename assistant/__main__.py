@@ -20,6 +20,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
+# httpx пишет в лог полный адрес каждого запроса, а токен бота стоит прямо
+# в адресе телеграма — то есть светится в логах Railway открытым текстом.
+# Оставляем от него только предупреждения и ошибки.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
