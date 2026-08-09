@@ -38,8 +38,10 @@ HISTORY_LIMIT: int = int(os.getenv("HISTORY_LIMIT", "10"))  # сколько с�
 
 # ── Расписание (часы в твоём часовом поясе) ──────────────────────────
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/Kyiv"))
-MORNING_HOUR: int = int(os.getenv("MORNING_HOUR", "8"))
-EVENING_HOUR: int = int(os.getenv("EVENING_HOUR", "21"))
+# Часы под Катю: утро пораньше, вечер попозже. Менять можно и здесь,
+# и переменными в Railway — переменная перебивает это значение.
+MORNING_HOUR: int = int(os.getenv("MORNING_HOUR", "7"))
+EVENING_HOUR: int = int(os.getenv("EVENING_HOUR", "22"))
 WEEKLY_REVIEW_HOUR: int = int(os.getenv("WEEKLY_REVIEW_HOUR", "11"))  # воскресенье
 
 # ── Опциональные модули (по умолчанию ВЫКЛ) ──────────────────────────
