@@ -87,6 +87,36 @@ def save_reflection(
     ).execute().data
 
 
+def search_history(query: str, limit: int = 15, session_id: str = "default") -> list[dict]:
+    """Найти в ЛЮБОЙ старой переписке сообщения со словом или фразой.
+
+    В разговор автоматически подтягиваются только последние сообщения
+    (get_recent_memory). Всё, что старше, лежит в базе, но достать его было
+    нечем. Это и есть недостающий ключ: полнотекстовый поиск по архиву.
+    """
+    rows = (
+        supabase.table("chat_history")
+        .select("role, content, created_at")
+        .eq("session_id", session_id)
+        .ilike("content", f"%{query}%")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+        .data
+    )
+    found = []
+    for row in reversed(rows):  # старые → новые, так читается естественнее
+        content = row.get("content")
+        if not content:
+            continue
+        found.append({
+            "когда": (row.get("created_at") or "")[:16].replace("T", " "),
+            "кто": "Катя" if row.get("role") == "human" else "я",
+            "текст": content,
+        })
+    return found
+
+
 def get_reflections(limit: int = 7, time_of_day: str | None = None) -> list[dict]:
     """Последние рефлексии (для обзоров и вопросов «что я планировала»)."""
     q = supabase.table("reflections").select("*")

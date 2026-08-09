@@ -34,7 +34,9 @@ MODEL_CHAT: str = os.getenv("MODEL_CHAT", "claude-haiku-4-5")
 MODEL_CHECKIN: str = os.getenv("MODEL_CHECKIN", "claude-sonnet-4-6")
 MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "4096"))
 MAX_TOOL_ROUNDS: int = int(os.getenv("MAX_TOOL_ROUNDS", "4"))
-HISTORY_LIMIT: int = int(os.getenv("HISTORY_LIMIT", "10"))  # сколько сообщений помнить
+# Сколько последних сообщений подтягивать в разговор автоматически.
+# Всё, что старше, лежит в базе и достаётся инструментом search_history.
+HISTORY_LIMIT: int = int(os.getenv("HISTORY_LIMIT", "30"))
 
 # ── Расписание (часы в твоём часовом поясе) ──────────────────────────
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/Kyiv"))

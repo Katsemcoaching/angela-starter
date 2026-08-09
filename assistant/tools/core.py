@@ -55,6 +55,28 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "search_history",
+        "description": (
+            "Поискать по ВСЕЙ прошлой переписке, включая давнюю. "
+            "Сама в разговор ты помнишь только последние сообщения — всё, что "
+            "старше, доставай этим инструментом. "
+            "Вызывай, когда Катя ссылается на прошлое: «мы это обсуждали», "
+            "«я тебе говорила про…», «помнишь, я рассказывала», «как звали ту…», "
+            "а также когда ищешь свои прежние договорённости и обещания. "
+            "query — одно-два ключевых слова, не целая фраза: поиск буквальный. "
+            "Ничего не нашлось — попробуй другое слово, потом честно скажи, "
+            "что не нашла, и не выдумывай."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Ключевое слово или короткая фраза"},
+                "limit": {"type": "integer", "default": 15},
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 
@@ -80,7 +102,18 @@ def _get_reflections(data: dict) -> list[dict]:
     return db.get_reflections(data.get("limit", 7), data.get("time_of_day"))
 
 
+def _search_history(data: dict) -> list[dict] | dict:
+    query = (data.get("query") or "").strip()
+    if not query:
+        return {"error": "не сказано, что искать"}
+    found = db.search_history(query, data.get("limit", 15))
+    if not found:
+        return {"найдено": 0, "подсказка": f"по слову «{query}» ничего нет — попробуй другое"}
+    return found
+
+
 HANDLERS = {
     "save_reflection": _save_reflection,
     "get_reflections": _get_reflections,
+    "search_history": _search_history,
 }
