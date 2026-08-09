@@ -5,9 +5,11 @@
 """
 
 import logging
+from datetime import datetime
 
 import httpx
 
+from assistant.config import TIMEZONE
 from assistant.google_auth import PERSONAL, authorized_accounts, get_access_token
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,9 @@ PROMPT_ADDON = """\
 («что на почте», «есть важные письма»). не дёргай почту в каждом сообщении.
 ящиков может быть два — у каждого письма есть поле «ящик». если письма из обоих,
 помечай откуда какое. если из одного — не уточняй, это шум.
+у каждого письма есть поле «когда» — дата. непрочитанное не значит свежее:
+письмо может висеть месяцами. если письму больше недели, обязательно скажи, когда оно
+пришло, и не подавай его как срочное. не выдумывай дату, бери из поля.
 """
 
 TOOLS = [
@@ -43,6 +48,18 @@ TOOLS = [
         },
     },
 ]
+
+
+def _when(internal_date: str) -> str:
+    """Дата письма. Gmail отдаёт миллисекунды с 1970 — переводим по-человечески.
+
+    Без этого непрочитанное письмо трёхмесячной давности выглядело точно так же,
+    как вчерашнее, и бот подавал старое как срочное.
+    """
+    try:
+        return datetime.fromtimestamp(int(internal_date) / 1000, TIMEZONE).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return ""
 
 
 def _header(headers: list[dict], name: str) -> str:
@@ -72,6 +89,7 @@ def _list_one(account: str, query: str, max_results: int) -> list[dict]:
             headers = d.get("payload", {}).get("headers", [])
             out.append({
                 "ящик": name,
+                "когда": _when(d.get("internalDate", "")),
                 "from": _header(headers, "From"),
                 "subject": _header(headers, "Subject"),
                 "snippet": d.get("snippet", ""),
