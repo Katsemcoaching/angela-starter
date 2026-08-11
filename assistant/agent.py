@@ -12,6 +12,7 @@
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -192,6 +193,26 @@ async def ask(
         raise
 
 
+# Пометка времени, которую мы сами ставим перед сообщениями из памяти
+# (см. db._stamp). Модель начала копировать её в свои ответы: 11 августа
+# написала «[11 авг, 11:26] Сегодня по бизнесу…» — причём время взяла
+# старое, из чужой строки истории. Просьбы в промпте не хватило, и это
+# закреплялось само: ответ с пометкой сохраняется в память и подкрепляет
+# привычку. Поэтому срезаем железно — до отправки Кате и до сохранения.
+# (?:...)+ — чтобы снимались и две пометки подряд, за один проход.
+_STAMP_RE = re.compile(
+    r"^[ \t]*(?:\[\s*\d{1,2}\s+[а-яё]{3}\.?,?\s*\d{1,2}:\d{2}\s*\][ \t]*)+",
+    re.MULTILINE,
+)
+
+
+def _strip_stamps(text: str) -> str:
+    """Убрать системные пометки времени, если модель их скопировала."""
+    return _STAMP_RE.sub("", text).strip()
+
+
 def _extract_text(response) -> str:
     parts = [block.text for block in response.content if hasattr(block, "text")]
-    return "\n".join(parts) if parts else "(что-то подвисло, попробуй ещё раз)"
+    if not parts:
+        return "(что-то подвисло, попробуй ещё раз)"
+    return _strip_stamps("\n".join(parts)) or "(что-то подвисло, попробуй ещё раз)"
