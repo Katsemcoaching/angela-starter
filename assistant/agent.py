@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 import anthropic
 
 from assistant import prompts
+from assistant.knowledge import KNOWLEDGE
 from assistant.config import (
     ANTHROPIC_API_KEY,
     MAX_TOKENS,
@@ -81,6 +82,8 @@ def _week_ahead(now: datetime) -> str:
 def _system_blocks(module_addons: str, extra_system: str) -> list[dict]:
     """Системный промпт двумя блоками: статичный (кэшируется) + изменчивый (время)."""
     static = prompts.PERSONA
+    if KNOWLEDGE:  # факты о бизнесе из knowledge/ — тоже статичны, кэшируются
+        static += "\n\n" + KNOWLEDGE
     if module_addons:
         static += "\n\n" + module_addons
 
