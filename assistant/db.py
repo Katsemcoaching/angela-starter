@@ -5,11 +5,11 @@
 `supabase`, импортируя его отсюда.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from supabase import create_client
 
-from assistant.config import SUPABASE_URL, SUPABASE_KEY
+from assistant.config import SUPABASE_URL, SUPABASE_KEY, TIMEZONE
 
 # Общий клиент. Опциональные модули делают: from assistant.db import supabase
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -25,11 +25,36 @@ def save_message(role: str, content: str, session_id: str = "default") -> None:
     }).execute()
 
 
+_MONTHS_RU = ("янв", "фев", "мар", "апр", "мая", "июн",
+              "июл", "авг", "сен", "окт", "ноя", "дек")
+
+
+def _stamp(created_at: str | None) -> str:
+    """Отметка времени перед сообщением из истории: «[9 авг, 10:21] ».
+
+    Без неё последние сообщения приходили сплошной стеной, без единого
+    признака, когда что было. 10 августа в 7:00 плановый чекин увидел
+    хвост воскресного разговора, принял его за сегодняшний и написал
+    «мы уже провели утренний чекин» — про катамаран, который был вчера.
+    Дату сегодняшнего дня она знала; не знала, какого числа воспоминания.
+    """
+    if not created_at:
+        return ""
+    try:
+        dt = datetime.fromisoformat(created_at)
+    except ValueError:
+        return ""
+    if dt.tzinfo is None:  # Supabase отдаёт UTC; на всякий случай проставим
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(TIMEZONE)
+    return f"[{dt.day} {_MONTHS_RU[dt.month - 1]}, {dt.strftime('%H:%M')}] "
+
+
 def get_recent_memory(limit: int = 10, session_id: str = "default") -> list[dict]:
-    """Последние сообщения в формате Claude (старые → новые)."""
+    """Последние сообщения в формате Claude (старые → новые), каждое с датой."""
     rows = (
         supabase.table("chat_history")
-        .select("role, content")
+        .select("role, content, created_at")
         .eq("session_id", session_id)
         .order("created_at", desc=True)
         .limit(limit)
@@ -42,7 +67,7 @@ def get_recent_memory(limit: int = 10, session_id: str = "default") -> list[dict
         if not content:
             continue
         role = "user" if row.get("role") == "human" else "assistant"
-        messages.append({"role": role, "content": content})
+        messages.append({"role": role, "content": _stamp(row.get("created_at")) + content})
     return messages
 
 
