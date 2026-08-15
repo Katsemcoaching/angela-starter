@@ -40,6 +40,8 @@ _RETRYABLE = {408, 409, 429, 500, 502, 503, 529}
 _OVERLOADED_MSG = (
     "claude сейчас перегружен — так бывает в пики. попробуй ещё раз через минуту 🙏"
 )
+# Показывается, только если и вторая попытка вернула пустой ответ.
+_EMPTY_MSG = "(что-то подвисло, попробуй ещё раз)"
 _MAX_TOOL_RESULT_CHARS = 6000  # обрезаем огромные ответы инструментов, чтобы не переплачивать
 
 
@@ -141,7 +143,32 @@ async def ask(
     is_checkin: bool = False,
     extra_system: str = "",
 ) -> str:
-    """Отправить сообщение ассистенту и получить ответ (с выполнением инструментов)."""
+    """Ответ ассистента. Пустой ответ — переспрашиваем один раз, молча.
+
+    15 августа Катя дважды получила «(что-то подвисло)» на голосовые: Claude
+    вернул ответ вообще без текста. Оба раза — вокруг большого вечернего
+    шеринга, где идёт много вызовов инструментов. В логи при этом не писалось
+    ничего, поэтому причина осталась догадкой. Теперь пишется, а Катя вместо
+    заглушки получает вторую попытку и обычно ничего не замечает.
+    """
+    for attempt in (1, 2):
+        text = await _ask_once(user_message, history, is_checkin, extra_system)
+        if text:
+            return text
+        logger.warning(
+            "Claude вернул пустой ответ (попытка %d из 2)%s",
+            attempt, " — переспрашиваю" if attempt == 1 else " — сдаюсь",
+        )
+    return _EMPTY_MSG
+
+
+async def _ask_once(
+    user_message: str,
+    history: list[dict] | None = None,
+    is_checkin: bool = False,
+    extra_system: str = "",
+) -> str:
+    """Один заход к Claude с выполнением инструментов. Пусто — вернёт ""."""
     tools, handlers, addons = build_runtime()
     system = _system_blocks(addons, extra_system)
     cached_tools = _cached_tools(tools)
@@ -218,7 +245,18 @@ def _strip_stamps(text: str) -> str:
 
 
 def _extract_text(response) -> str:
+    """Текст ответа. Пусто — возвращаем "", решение принимает ask()."""
     parts = [block.text for block in response.content if hasattr(block, "text")]
     if not parts:
-        return "(что-то подвисло, попробуй ещё раз)"
-    return _strip_stamps("\n".join(parts)) or "(что-то подвисло, попробуй ещё раз)"
+        # Ровно этот случай Катя видела 15 августа: в ответе одни вызовы
+        # инструментов и ни одного текстового блока.
+        logger.warning(
+            "в ответе нет текста: stop_reason=%s, блоки=%s",
+            getattr(response, "stop_reason", "?"),
+            [getattr(b, "type", "?") for b in response.content],
+        )
+        return ""
+    text = _strip_stamps("\n".join(parts))
+    if not text:
+        logger.warning("текст ответа исчез после срезания пометок: %r", parts)
+    return text
