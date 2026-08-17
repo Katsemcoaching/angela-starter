@@ -25,7 +25,10 @@ PROMPT_ADDON = """\
 если просят изменить существующее («переименуй», «перенеси на 15:00», «поменяй место») —
 сначала найди событие через gcal_today или gcal_upcoming, возьми оттуда event_id и
 calendar_id, потом вызови gcal_update_event и передай только то, что меняется.
-удалять события ты не умеешь — так и скажи, что это надо руками в календаре.
+если просят удалить («удали встречу», «отмени созвон», «убери из календаря») — найди
+событие так же, назови Кате время и название и дождись её «да». только после этого
+вызывай gcal_delete_event. без её ответа не удаляй, даже если кажется очевидным.
+одна просьба — одно событие: несколько сразу не сноси, спроси про каждое.
 не ври про сделанное: если инструмент вернул error, честно скажи, что не получилось,
 и не делай вид, что записала.
 иначе календарь сам не дёргай.
@@ -85,6 +88,28 @@ TOOLS = [
                 "location": {"type": "string"},
             },
             "required": ["event_id", "calendar_id"],
+        },
+    },
+    {
+        "name": "gcal_delete_event",
+        "description": (
+            "Удалить событие из календаря. Вызывать ТОЛЬКО после того, как Катя "
+            "подтвердила словами, что удаляем именно эту встречу. "
+            "Сначала найди её через gcal_today или gcal_upcoming — оттуда возьми "
+            "event_id, calendar_id и title ровно как там написано."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string", "description": "id события из gcal_today/gcal_upcoming"},
+                "calendar_id": {"type": "string", "description": "calendar_id оттуда же"},
+                "title": {
+                    "type": "string",
+                    "description": "Название события ровно как в gcal_today/gcal_upcoming. "
+                                   "Сверяется перед удалением, чтобы не снести чужую встречу.",
+                },
+            },
+            "required": ["event_id", "calendar_id", "title"],
         },
     },
 ]
@@ -257,9 +282,66 @@ def _gcal_update_event(data: dict) -> dict:
         return {"error": str(exc)}
 
 
+def _gcal_delete_event(data: dict) -> dict:
+    token = get_access_token()
+    if not token:
+        return {"error": "Google не авторизован — открой /google/auth у бота"}
+
+    cal = quote(data["calendar_id"], safe="")
+    ev = quote(data["event_id"], safe="")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Сверка перед удалением: id может быть взят из старого списка или выдуман.
+    # Ошибка тут стоит дороже всех остальных — событие не вернуть одним словом.
+    try:
+        resp = httpx.get(f"{API}/calendars/{cal}/events/{ev}", headers=headers, timeout=15)
+        resp.raise_for_status()
+        event = resp.json()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (404, 410):
+            return {"error": "такого события в календаре нет — посмотри список заново"}
+        if exc.response.status_code in (401, 403):
+            return {"error": "нет доступа к этому событию — календарь отдан только на просмотр"}
+        logger.exception("ошибка чтения события перед удалением")
+        return {"error": str(exc)}
+    except Exception as exc:
+        logger.exception("ошибка чтения события перед удалением")
+        return {"error": str(exc)}
+
+    if event.get("status") == "cancelled":
+        return {"error": "событие уже отменено, удалять нечего"}
+
+    actual = (event.get("summary") or "(без названия)").strip()
+    if actual.casefold() != (data["title"] or "").strip().casefold():
+        # Не гадаем, что Катя имела в виду: называем, что лежит по этому id.
+        return {"error": f"название не совпало: по этому id лежит «{actual}». "
+                         f"Ничего не удалила — уточни у Кати, ту ли встречу убираем"}
+
+    try:
+        resp = httpx.delete(f"{API}/calendars/{cal}/events/{ev}", headers=headers,
+                            params={"sendUpdates": "all"}, timeout=15)
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            return {"error": "нет права удалять события в этом календаре — "
+                             "он расшарен только на просмотр"}
+        logger.exception("ошибка удаления события")
+        return {"error": str(exc)}
+    except Exception as exc:
+        logger.exception("ошибка удаления события")
+        return {"error": str(exc)}
+
+    return {
+        "deleted": True,
+        "title": actual,
+        "note": "событие ушло в корзину Google — там его можно вернуть в течение 30 дней",
+    }
+
+
 HANDLERS = {
     "gcal_today": _gcal_today,
     "gcal_upcoming": _gcal_upcoming,
     "gcal_create_event": _gcal_create_event,
     "gcal_update_event": _gcal_update_event,
+    "gcal_delete_event": _gcal_delete_event,
 }
