@@ -150,6 +150,24 @@ def get_reflections(limit: int = 7, time_of_day: str | None = None) -> list[dict
     return q.order("date", desc=True).limit(limit).execute().data
 
 
+def has_reflection_today(time_of_day: str, date_str: str) -> bool:
+    """Прислала ли Катя шеринг за этот день сама, до планового чекина.
+
+    Она часто пишет раньше расписания — в 6 утра или в 9 вечера. Плановый
+    чекин про это не знал и спрашивал то же самое второй раз.
+    """
+    rows = (
+        supabase.table("reflections")
+        .select("id")
+        .eq("time_of_day", time_of_day)
+        .eq("date", date_str)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return len(rows) > 0
+
+
 # ── Журнал чекинов (чтобы не отправлять дважды после рестарта) ────────
 def was_checkin_sent(label: str, date_str: str) -> bool:
     rows = (
