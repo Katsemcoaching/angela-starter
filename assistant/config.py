@@ -30,7 +30,10 @@ SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
 # ── Модели Claude ────────────────────────────────────────────────────
 # Чекины (утро/вечер/неделя) идут на «умной» модели — там важен нюанс.
 # Обычный чат — на быстрой и дешёвой. Менять не обязательно.
-MODEL_CHAT: str = os.getenv("MODEL_CHAT", "claude-haiku-4-5")
+# Разговор шёл на Haiku — самой маленькой модели, и именно там нужна тонкость.
+# 20 августа перевели на Sonnet: главный рычаг «глубины», важнее любого промпта.
+# Примерно втрое дороже, ~$40/мес вместо ~$13 при тридцати сообщениях в день.
+MODEL_CHAT: str = os.getenv("MODEL_CHAT", "claude-sonnet-5")
 MODEL_CHECKIN: str = os.getenv("MODEL_CHECKIN", "claude-sonnet-4-6")
 MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "4096"))
 MAX_TOOL_ROUNDS: int = int(os.getenv("MAX_TOOL_ROUNDS", "4"))
