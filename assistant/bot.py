@@ -8,6 +8,8 @@ import logging
 import tempfile
 
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
+from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -16,7 +18,7 @@ from telegram.ext import (
     filters,
 )
 
-from assistant import db
+from assistant import db, formatting
 from assistant.agent import ask
 from assistant.config import HISTORY_LIMIT, OPENAI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from assistant.prompts import ASSISTANT_NAME
@@ -42,9 +44,21 @@ def _is_owner(update: Update) -> bool:
 
 
 async def _reply(update: Update, text: str) -> None:
-    """Отправить ответ, разбив на куски по 4000 символов (лимит Telegram — 4096)."""
-    for i in range(0, len(text), 4000):
-        await update.message.reply_text(text[i:i + 4000], reply_markup=KEYBOARD)
+    """Отправить ответ: жирный там, где модель поставила **звёздочки**.
+
+    Если Telegram почему-то не принял разметку — шлём тот же кусок обычным
+    текстом. Лучше сообщение без жирного, чем никакого сообщения.
+    """
+    for chunk in formatting.split_chunks(text):
+        try:
+            await update.message.reply_text(
+                formatting.to_html(chunk),
+                parse_mode=ParseMode.HTML,
+                reply_markup=KEYBOARD,
+            )
+        except BadRequest:
+            logger.exception("Telegram не принял разметку — шлю обычным текстом")
+            await update.message.reply_text(chunk, reply_markup=KEYBOARD)
 
 
 async def _process(update: Update, user_text: str, prefix: str = "") -> None:

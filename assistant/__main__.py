@@ -10,8 +10,10 @@ import logging
 import threading
 
 import uvicorn
+from telegram.constants import ParseMode
+from telegram.error import BadRequest
 
-from assistant import config
+from assistant import config, formatting
 from assistant.bot import create_application
 from assistant.scheduler import create_scheduler, run_catchup, set_sender
 from assistant.web import web_app
@@ -46,8 +48,18 @@ async def run() -> None:
     app = create_application()
 
     # Планировщик шлёт чекины в твой чат через этого бота.
+    # Разметка та же, что и в живых ответах: **звёздочки** → жирный.
     async def send(text: str) -> None:
-        await app.bot.send_message(chat_id=config.TELEGRAM_CHAT_ID, text=text)
+        for chunk in formatting.split_chunks(text):
+            try:
+                await app.bot.send_message(
+                    chat_id=config.TELEGRAM_CHAT_ID,
+                    text=formatting.to_html(chunk),
+                    parse_mode=ParseMode.HTML,
+                )
+            except BadRequest:
+                logger.exception("чекин: Telegram не принял разметку, шлю текстом")
+                await app.bot.send_message(chat_id=config.TELEGRAM_CHAT_ID, text=chunk)
 
     set_sender(send)
 
