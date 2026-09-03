@@ -67,7 +67,7 @@ async def _process(update: Update, user_text: str, prefix: str = "") -> None:
     history = db.get_recent_memory(limit=HISTORY_LIMIT)
     # пометка [голосовое] уходит и в Claude, не только в память: без неё
     # Анджелина не знает, что Катя диктовала, и правило про чистовик не
-    # срабатывает в момент ответа (разбор 21 августа 2026)
+    # срабатывает в момент ответа (разбор 3 сентября 2026)
     answer = await ask(f"{prefix}{user_text}", history=history)
     db.save_message("human", f"{prefix}{user_text}")
     db.save_message("ai", answer)
