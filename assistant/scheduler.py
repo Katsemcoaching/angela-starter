@@ -94,6 +94,19 @@ async def _poll_reminders() -> None:
         logger.exception("ошибка опроса напоминаний")
 
 
+async def _collect_oura() -> None:
+    """Забрать свежие данные кольца в базу (модуль oura).
+
+    Молча: Кате ничего не пишем. Это сбор, а не сообщение — звоночки и
+    выводы делает Анджелина в чекине, взяв уже готовые цифры.
+    """
+    try:
+        from assistant.tools.oura import collect
+        await asyncio.to_thread(collect)
+    except Exception:
+        logger.exception("ошибка сбора данных кольца")
+
+
 async def run_catchup() -> None:
     """На старте досылает чекин, если время уже прошло, а его сегодня не было."""
     if not _send:
@@ -145,6 +158,17 @@ def create_scheduler() -> AsyncIOScheduler:
                         timezone=config.TIMEZONE),
             args=[prompts.WEEKLY_REVIEW, "недельный"],
             id="weekly", replace_existing=True,
+        )
+
+    # ── Опция: сбор данных кольца ──
+    # За час до утреннего чекина, каждый день (включая выходные): сбор — не
+    # сообщение, он нужен и в субботу. К 7:00 цифры уже лежат в базе.
+    if config.ENABLE_OURA:
+        sched.add_job(
+            _collect_oura,
+            CronTrigger(hour=max(config.MORNING_HOUR - 1, 0), minute=0,
+                        timezone=config.TIMEZONE),
+            id="oura", replace_existing=True,
         )
 
     # ── Опция: опрос напоминаний раз в минуту ──

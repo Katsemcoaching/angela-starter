@@ -43,6 +43,40 @@ async def google_auth_start(account: str = "work"):
     )
 
 
+@web_app.get("/oura/auth")
+async def oura_auth_start():
+    """Открой эту ссылку в браузере, чтобы разрешить доступ к кольцу Oura."""
+    if not config.ENABLE_OURA:
+        return HTMLResponse("<h2>Модуль кольца выключен</h2>", status_code=400)
+    if not config.OURA_CLIENT_ID:
+        return HTMLResponse("<h2>OURA_CLIENT_ID не задан</h2>", status_code=500)
+    from assistant.oura_auth import get_auth_url
+    return HTMLResponse(
+        '<h2>Авторизация кольца Oura</h2>'
+        '<p>Дальше войди тем аккаунтом Oura, на котором кольцо.</p>'
+        f'<p><a href="{get_auth_url()}">Нажми, чтобы разрешить доступ</a></p>'
+    )
+
+
+@web_app.get("/oura/callback")
+async def oura_callback(code: str = "", error: str = ""):
+    """Сюда Oura возвращает после согласия — меняем код на токены."""
+    if error:
+        return HTMLResponse(f"<h2>Ошибка: {error}</h2>", status_code=400)
+    if not code:
+        return HTMLResponse("<h2>Нет кода авторизации</h2>", status_code=400)
+    try:
+        from assistant.oura_auth import exchange_code
+        exchange_code(code)
+        return HTMLResponse(
+            "<h2>Готово ✅</h2><p>Кольцо подключено. "
+            "Можно закрыть вкладку и вернуться в бота.</p>"
+        )
+    except Exception as exc:
+        logger.exception("ошибка callback Oura")
+        return HTMLResponse(f"<h2>Ошибка: {exc}</h2>", status_code=500)
+
+
 @web_app.get("/google/callback")
 async def google_callback(code: str = "", error: str = "", state: str = ""):
     """Сюда Google возвращает после согласия — меняем код на токены."""

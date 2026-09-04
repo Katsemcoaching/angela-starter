@@ -56,6 +56,7 @@ ENABLE_GMAIL: bool = _flag("ENABLE_GMAIL")              # docs/04-add-gmail.md
 ENABLE_GCAL: bool = _flag("ENABLE_GCAL")                # docs/05-add-calendar.md
 ENABLE_REMINDERS: bool = _flag("ENABLE_REMINDERS")     # docs/06-add-reminders.md
 ENABLE_WEEKLY_REVIEW: bool = _flag("ENABLE_WEEKLY_REVIEW")  # docs/06-add-reminders.md
+ENABLE_OURA: bool = _flag("ENABLE_OURA")                # кольцо Oura
 
 # ── Ключи для опциональных интеграций ────────────────────────────────
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")      # голосовые (Whisper)
@@ -64,6 +65,18 @@ GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
 # Куда Google вернёт пользователя после авторизации.
 # Пример: https://your-app.up.railway.app/google/callback
 GOOGLE_REDIRECT_URI: str = os.getenv("GOOGLE_REDIRECT_URI", "")
+
+# Кольцо Oura. Приложение заводится в кабинете разработчика Oura
+# (developer.ouraring.com) — оттуда client_id и client_secret.
+OURA_CLIENT_ID: str = os.getenv("OURA_CLIENT_ID", "")
+OURA_CLIENT_SECRET: str = os.getenv("OURA_CLIENT_SECRET", "")
+# Пример: https://your-app.up.railway.app/oura/callback
+OURA_REDIRECT_URI: str = os.getenv("OURA_REDIRECT_URI", "")
+# Права: только те, что нужны для сна, пульса и стресса. Почту не просим.
+# Вынесено в переменную, чтобы добавить новое право без правки кода —
+# Oura время от времени заводит новые (stress, heart_health).
+OURA_SCOPES: str = os.getenv(
+    "OURA_SCOPES", "personal daily heartrate session spo2 tag workout")
 
 # ── Сервер (Railway сам задаёт PORT) ─────────────────────────────────
 PORT: int = int(os.getenv("PORT", "8080"))

@@ -65,9 +65,34 @@ create table if not exists reminders (
 
 -- ── ОПЦИЯ: Google (ENABLE_GMAIL / ENABLE_GCAL) — docs/04-add-gmail.md ───────
 create table if not exists oauth_tokens (
-  key           text primary key,                   -- 'google'
+  key           text primary key,                   -- 'google', 'oura'
   access_token  text,
   refresh_token text,
   expires_at    timestamptz,
   updated_at    timestamptz not null default now()
+);
+
+-- ── ОПЦИЯ: кольцо Oura (ENABLE_OURA) ───────────────────────────────────────
+-- Один день = одна строка. Данные забираются раз в сутки и перезаписываются
+-- (Oura досчитывает ночь не мгновенно, поздние уточнения — нормальны).
+create table if not exists oura_daily (
+  day               date primary key,
+  sleep_score       int,
+  readiness_score   int,
+  temp_deviation    numeric,     -- отклонение температуры от её нормы
+  rhr               int,         -- пульс покоя (самый низкий за ночь)
+  avg_hr            numeric,
+  hrv               int,         -- вариабельность, средняя за ночь
+  total_min         int,
+  deep_min          int,         -- глубокая фаза
+  rem_min           int,
+  light_min         int,
+  awake_min         int,
+  latency_min       int,         -- сколько засыпала
+  efficiency        int,
+  restless          int,         -- беспокойные периоды
+  stress_high_min   int,
+  recovery_high_min int,
+  stress_summary    text,
+  updated_at        timestamptz not null default now()
 );

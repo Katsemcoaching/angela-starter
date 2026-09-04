@@ -44,4 +44,10 @@ def build_runtime() -> tuple[list[dict], dict, str]:
         handlers.update(gcal.HANDLERS)
         addons.append(gcal.PROMPT_ADDON)
 
+    if config.ENABLE_OURA:
+        from assistant.tools import oura
+        tools += oura.TOOLS
+        handlers.update(oura.HANDLERS)
+        addons.append(oura.PROMPT_ADDON)
+
     return tools, handlers, "\n\n".join(a for a in addons if a)
