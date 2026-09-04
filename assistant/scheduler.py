@@ -94,7 +94,7 @@ async def _poll_reminders() -> None:
         logger.exception("ошибка опроса напоминаний")
 
 
-async def _collect_oura() -> None:
+async def _collect_oura(days: int = 3) -> None:
     """Забрать свежие данные кольца в базу (модуль oura).
 
     Молча: Кате ничего не пишем. Это сбор, а не сообщение — звоночки и
@@ -102,9 +102,27 @@ async def _collect_oura() -> None:
     """
     try:
         from assistant.tools.oura import collect
-        await asyncio.to_thread(collect)
+        await asyncio.to_thread(collect, days)
     except Exception:
         logger.exception("ошибка сбора данных кольца")
+
+
+async def startup_collect() -> None:
+    """На старте подтянуть данные кольца, чтобы не ждать до утра.
+
+    Первый запуск (база пустая) берёт историю поглубже: кольцо отдаёт всё,
+    что успело намерить, и Катина норма начинает набираться сразу, а не с
+    завтрашнего дня.
+    """
+    if not config.ENABLE_OURA:
+        return
+    try:
+        from assistant.tools.oura import has_data
+        first_run = not await asyncio.to_thread(has_data)
+    except Exception:
+        logger.exception("модуль кольца не поднялся — сбор пропускаю")
+        return
+    await _collect_oura(60 if first_run else 3)
 
 
 async def run_catchup() -> None:

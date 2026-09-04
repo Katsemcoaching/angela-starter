@@ -15,7 +15,12 @@ from telegram.error import BadRequest
 
 from assistant import config, formatting
 from assistant.bot import create_application
-from assistant.scheduler import create_scheduler, run_catchup, set_sender
+from assistant.scheduler import (
+    create_scheduler,
+    run_catchup,
+    set_sender,
+    startup_collect,
+)
 from assistant.web import web_app
 
 logging.basicConfig(
@@ -75,6 +80,7 @@ async def run() -> None:
     logger.info("планировщик запущен (TZ=%s)", config.TIMEZONE)
 
     await run_catchup()  # дослать пропущенный чекин, если время уже прошло
+    await startup_collect()  # подтянуть данные кольца, если модуль включён
 
     try:
         while True:

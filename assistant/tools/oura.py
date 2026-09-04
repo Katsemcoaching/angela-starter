@@ -194,6 +194,15 @@ def _rows(limit: int) -> list[dict]:
     )
 
 
+def has_data() -> bool:
+    """Есть ли в базе хоть один день кольца (нужно планировщику на старте)."""
+    try:
+        return bool(_rows(1))
+    except Exception:
+        logger.exception("не смогла проверить, есть ли данные кольца")
+        return True  # сомневаешься — не тяни глубокую историю лишний раз
+
+
 def _get_oura_day(data: dict) -> dict | None:
     day = data.get("date")
     if day:
