@@ -194,6 +194,29 @@ def _rows(limit: int) -> list[dict]:
     )
 
 
+# База пустая ровно один раз — сразу после первой авторизации. Тянуть
+# историю на каждый вопрос незачем, поэтому пробуем один раз за запуск.
+_backfilled = False
+
+
+def _ensure_data() -> None:
+    """Если в базе пусто — сходить за историей, а не отвечать «данных нет».
+
+    Нужно из-за порядка событий: сбор стоит на старте бота и на утро, а
+    кольцо авторизуется позже. Без этого первый вопрос Кати упирался бы
+    в пустую таблицу до следующего утра.
+    """
+    global _backfilled
+    if _backfilled:
+        return
+    _backfilled = True
+    try:
+        if not _rows(1):
+            collect(60)
+    except Exception:
+        logger.exception("не удалось подтянуть историю кольца")
+
+
 def has_data() -> bool:
     """Есть ли в базе хоть один день кольца (нужно планировщику на старте)."""
     try:
@@ -204,6 +227,7 @@ def has_data() -> bool:
 
 
 def _get_oura_day(data: dict) -> dict | None:
+    _ensure_data()
     day = data.get("date")
     if day:
         rows = supabase.table("oura_daily").select("*").eq("day", day).limit(1).execute().data
@@ -218,6 +242,7 @@ def _average(rows: list[dict], field: str) -> float | None:
 
 
 def _get_oura_trend(data: dict) -> dict:
+    _ensure_data()
     days = int(data.get("days") or CALIBRATION_DAYS)
     rows = _rows(days + 1)
     if not rows:

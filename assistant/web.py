@@ -68,9 +68,16 @@ async def oura_callback(code: str = "", error: str = ""):
     try:
         from assistant.oura_auth import exchange_code
         exchange_code(code)
+        # Сразу тянем историю: сбор стоит на старте бота и на утро, а
+        # авторизация проходит позже. Без этого данные появились бы только
+        # на следующий день.
+        import asyncio
+
+        from assistant.tools.oura import collect
+        days = await asyncio.to_thread(collect, 60)
         return HTMLResponse(
-            "<h2>Готово ✅</h2><p>Кольцо подключено. "
-            "Можно закрыть вкладку и вернуться в бота.</p>"
+            f"<h2>Готово ✅</h2><p>Кольцо подключено. Забрано дней: {days}.</p>"
+            "<p>Можно закрыть вкладку и вернуться в бота.</p>"
         )
     except Exception as exc:
         logger.exception("ошибка callback Oura")
