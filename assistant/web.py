@@ -103,6 +103,36 @@ async def oura_status():
             except Exception:
                 out["oura_body"] = resp.text[:200]
 
+        # Разведка новых разделов: доступны ли и как называются поля.
+        # Возвращаем ТОЛЬКО имена полей — теги это личные заметки Кати.
+        if token:
+            probe: dict = {}
+            end = date.today()
+            start = end - timedelta(days=14)
+            for name in ("daily_resilience", "enhanced_tag"):
+                try:
+                    r = await asyncio.to_thread(
+                        lambda n=name: httpx.get(
+                            f"https://api.ouraring.com/v2/usercollection/{n}",
+                            params={"start_date": start.isoformat(),
+                                    "end_date": end.isoformat()},
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=20,
+                        )
+                    )
+                    info: dict = {"http": r.status_code}
+                    if r.status_code == 200:
+                        rows = r.json().get("data", [])
+                        info["rows"] = len(rows)
+                        if rows:
+                            info["fields"] = sorted(rows[0].keys())
+                    else:
+                        info["body"] = r.text[:160]
+                    probe[name] = info
+                except Exception as exc:
+                    probe[name] = {"error": f"{type(exc).__name__}: {exc}"}
+            out["probe"] = probe
+
         last = (supabase.table("oura_daily").select("*")
                 .order("day", desc=True).limit(5).execute().data)
         out["db_total"] = len(supabase.table("oura_daily").select("day")
