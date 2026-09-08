@@ -122,7 +122,7 @@ async def startup_collect() -> None:
     except Exception:
         logger.exception("модуль кольца не поднялся — сбор пропускаю")
         return
-    await _collect_oura(60 if first_run else 3)
+    await _collect_oura(60 if first_run else 14)
 
 
 async def run_catchup() -> None:
@@ -182,10 +182,15 @@ def create_scheduler() -> AsyncIOScheduler:
     # За час до утреннего чекина, каждый день (включая выходные): сбор — не
     # сообщение, он нужен и в субботу. К 7:00 цифры уже лежат в базе.
     if config.ENABLE_OURA:
+        # Окно 14 дней, а не 3: 8 сентября выяснилось, что ночи за 4 и 5-е
+        # так и не подтянулись — узкое окно ушло вперёд и дыры остались
+        # навсегда. Перезапись старых дней безопасна (upsert), а норма
+        # строится ровно на этих четырнадцати ночах.
         sched.add_job(
             _collect_oura,
             CronTrigger(hour=max(config.MORNING_HOUR - 1, 0), minute=0,
                         timezone=config.TIMEZONE),
+            args=[14],
             id="oura", replace_existing=True,
         )
 
