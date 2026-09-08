@@ -103,16 +103,18 @@ async def oura_status():
             except Exception:
                 out["oura_body"] = resp.text[:200]
 
-        last = (supabase.table("oura_daily")
-                .select("day,sleep_score,rhr,total_min")
+        last = (supabase.table("oura_daily").select("*")
                 .order("day", desc=True).limit(5).execute().data)
         out["db_total"] = len(supabase.table("oura_daily").select("day")
                               .limit(200).execute().data)
+        # Какие поля реально заполнены — только «да/нет», без значений.
+        watch = ("sleep_score", "readiness_score", "temp_deviation", "rhr",
+                 "hrv", "total_min", "deep_min", "awake_min", "efficiency",
+                 "restless", "stress_high_min", "recovery_high_min",
+                 "stress_summary")
         out["db_last"] = [
             {"day": r["day"],
-             "sleep": r.get("sleep_score") is not None,
-             "rhr": r.get("rhr") is not None,
-             "total": r.get("total_min") is not None}
+             "filled": [f for f in watch if r.get(f) is not None]}
             for r in last
         ]
     except Exception as exc:
