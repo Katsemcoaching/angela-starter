@@ -16,6 +16,7 @@
 """
 
 import logging
+import time
 from datetime import date, timedelta
 
 import httpx
@@ -70,6 +71,11 @@ PROMPT_ADDON = f"""\
   действительно доказано. Не знаешь — скажи «не знаю».
 - её ощущения важнее показаний. Цифры говорят «всё хорошо», а Катя
   чувствует, что разваливается, — права она. Верь ей, а не кольцу.
+- пустое поле — это НЕ ноль. Если в ответе стоит night_pending или поля
+  сна пустые, значит Oura ещё не разобрала ночь (она делает это не сразу
+  после пробуждения). Никогда не говори «везде нули» и «всё по нулям» —
+  скажи, что данные за эту ночь ещё не пришли, и предложи заглянуть
+  позже. Ноль — это измеренный ноль, а его почти не бывает.
 
 Главное, ради чего это подключено: у Кати цикл перегруза — несколько дней
 на полных оборотах, потом обвал. Она сама просила замечать разгон раньше
@@ -211,27 +217,43 @@ def _rows(limit: int) -> list[dict]:
     )
 
 
-# База пустая ровно один раз — сразу после первой авторизации. Тянуть
-# историю на каждый вопрос незачем, поэтому пробуем один раз за запуск.
-_backfilled = False
+def _has_sleep(row: dict) -> bool:
+    """Есть ли в строке сама ночь, а не только дневные показатели.
+
+    Строка за день может появиться раньше, чем Oura досчитает сон: дневной
+    стресс и готовность приходят отдельно от разбора ночи. Тогда в строке
+    стоит дата и пустые поля сна — это не «ноль», это «ещё не готово».
+    """
+    return row.get("total_min") is not None
+
+
+# Чаще раза в полчаса дёргать Oura незачем: ночь досчитывается не мгновенно,
+# но и ждать до завтра нельзя — Катя спрашивает утром.
+_last_pull = 0.0
+_PULL_EVERY = 30 * 60
 
 
 def _ensure_data() -> None:
-    """Если в базе пусто — сходить за историей, а не отвечать «данных нет».
+    """Дотянуть данные, если их нет или ночь ещё не досчитана.
 
-    Нужно из-за порядка событий: сбор стоит на старте бота и на утро, а
-    кольцо авторизуется позже. Без этого первый вопрос Кати упирался бы
-    в пустую таблицу до следующего утра.
+    Два случая, оба живые:
+    1. База пуста — сразу после первой авторизации (4 сентября).
+    2. Свежая строка есть, но без сна — утро 8 сентября: сбор в 6:00
+       успел взять дневные показатели, а ночь Oura ещё не разобрала.
+       Анджелина брала эту строку как последнюю и говорила «везде нули».
     """
-    global _backfilled
-    if _backfilled:
+    global _last_pull
+    if time.time() - _last_pull < _PULL_EVERY:
         return
-    _backfilled = True
+    _last_pull = time.time()
     try:
-        if not _rows(1):
+        rows = _rows(1)
+        if not rows:
             collect(60)
+        elif not _has_sleep(rows[0]):
+            collect(3)
     except Exception:
-        logger.exception("не удалось подтянуть историю кольца")
+        logger.exception("не удалось подтянуть данные кольца")
 
 
 def has_data() -> bool:
@@ -244,9 +266,13 @@ def has_data() -> bool:
 
 
 def _days_of_data() -> int:
-    """Сколько дней кольца накоплено (больше CALIBRATION_DAYS не считаем)."""
+    """Сколько НОЧЕЙ накоплено (больше CALIBRATION_DAYS не считаем).
+
+    Считаем только строки, где ночь разобрана. Пустышка с одной датой —
+    не день данных: норму по ней не построишь.
+    """
     try:
-        return len(_rows(CALIBRATION_DAYS + 1))
+        return len([r for r in _rows(CALIBRATION_DAYS + 5) if _has_sleep(r)])
     except Exception:
         logger.exception("не смогла посчитать дни кольца")
         return 0
@@ -276,13 +302,43 @@ def _with_calibration(row: dict) -> dict:
 
 
 def _get_oura_day(data: dict) -> dict | None:
+    """Данные за день. Без даты — последняя РАЗОБРАННАЯ ночь, а не последняя строка.
+
+    8 сентября это и сломалось: строка за сегодня уже была (дневные
+    показатели), а ночь Oura ещё не досчитала. Бралась она как последняя,
+    поля сна пустые — и Анджелина сказала «везде нули», хотя данные за
+    предыдущие ночи лежали рядом.
+    """
     _ensure_data()
     day = data.get("date")
     if day:
         rows = supabase.table("oura_daily").select("*").eq("day", day).limit(1).execute().data
+        if not rows:
+            return None
+        row = rows[0]
     else:
-        rows = _rows(1)
-    return _with_calibration(rows[0]) if rows else None
+        rows = _rows(7)
+        if not rows:
+            return None
+        # Первая строка с разобранной ночью; если таких нет — самая свежая.
+        row = next((r for r in rows if _has_sleep(r)), rows[0])
+        if not _has_sleep(row):
+            return {
+                "day": row.get("day"),
+                "night_pending": True,
+                "note": ("Ночь ещё не разобрана — Oura досчитывает её не сразу "
+                         "после пробуждения. Это НЕ нули и не плохие показатели. "
+                         "Так и скажи: данные за эту ночь ещё не пришли, "
+                         "загляни позже."),
+            }
+    out = _with_calibration(row)
+    if not _has_sleep(row):
+        out["night_pending"] = True
+        out["note"] = (
+            "За этот день есть только дневные показатели — ночь Oura "
+            "не разобрала. Пустые поля сна означают «нет данных», а не ноль."
+        )
+    return out
 
 
 def _average(rows: list[dict], field: str) -> float | None:
@@ -298,7 +354,16 @@ def _get_oura_trend(data: dict) -> dict:
         return {"days_of_data": 0, "calibrating": True,
                 "note": "данных кольца в базе ещё нет"}
 
-    latest, earlier = rows[0], rows[1:]
+    # Сравниваем последнюю РАЗОБРАННУЮ ночь, а не последнюю строку: строка
+    # за сегодня может быть ещё пустой, и тогда все отклонения выглядели бы
+    # как нули. Норму считаем по остальным разобранным ночам.
+    nights = [r for r in rows if _has_sleep(r)]
+    if not nights:
+        return {"days_of_data": 0, "calibrating": True,
+                "night_pending": True,
+                "note": "ночи ещё не разобраны — данных для сравнения нет"}
+
+    latest, earlier = nights[0], nights[1:]
     fields = ("rhr", "hrv", "sleep_score", "readiness_score", "total_min",
               "deep_min", "rem_min", "awake_min", "efficiency")
 
@@ -309,7 +374,7 @@ def _get_oura_trend(data: dict) -> dict:
         if latest.get(f) is not None and baseline.get(f) is not None
     }
 
-    days_of_data = len(rows)
+    days_of_data = len(nights)
     return {
         "days_of_data": days_of_data,
         "calibrating": days_of_data < CALIBRATION_DAYS,
