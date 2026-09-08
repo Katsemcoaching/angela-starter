@@ -147,6 +147,17 @@ async def oura_status():
              "filled": [f for f in watch if r.get(f) is not None]}
             for r in last
         ]
+        out["db_resilience_days"] = len(
+            [r for r in last if r.get("resilience") is not None])
+        # Метки — своя таблица. Считаем только количество и последний день:
+        # содержимое меток это личные заметки, наружу их не отдаём.
+        try:
+            tags = (supabase.table("oura_tags").select("day")
+                    .order("day", desc=True).limit(200).execute().data)
+            out["db_tags"] = len(tags)
+            out["db_tags_last_day"] = tags[0]["day"] if tags else None
+        except Exception as exc:
+            out["db_tags_error"] = f"{type(exc).__name__}: {exc}"
     except Exception as exc:
         out["error"] = f"{type(exc).__name__}: {exc}"
     return out
