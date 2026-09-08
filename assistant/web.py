@@ -58,6 +58,68 @@ async def oura_auth_start():
     )
 
 
+@web_app.get("/oura/status")
+async def oura_status():
+    """Диагностика цепочки кольца: токен → Oura → база.
+
+    Нужна потому, что изнутри Railway и Supabase агенту не видны. Отдаёт
+    только состояние звеньев: есть/нет, коды ответов, даты. Ни ключей, ни
+    самих показателей здоровья здесь нет — страница открыта наружу.
+    """
+    import asyncio
+    from datetime import date, timedelta
+
+    import httpx
+
+    out: dict = {"enabled": config.ENABLE_OURA}
+    if not config.ENABLE_OURA:
+        return out
+    try:
+        from assistant.db import supabase
+        from assistant.oura_auth import KEY, get_access_token
+
+        rows = (supabase.table("oauth_tokens").select("expires_at")
+                .eq("key", KEY).limit(1).execute().data)
+        out["token_saved"] = bool(rows)
+        out["token_expires_at"] = rows[0].get("expires_at") if rows else None
+
+        token = await asyncio.to_thread(get_access_token)
+        out["token_usable"] = bool(token)
+
+        if token:
+            end = date.today()
+            start = end - timedelta(days=3)
+            resp = await asyncio.to_thread(
+                lambda: httpx.get(
+                    "https://api.ouraring.com/v2/usercollection/daily_sleep",
+                    params={"start_date": start.isoformat(), "end_date": end.isoformat()},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=20,
+                )
+            )
+            out["oura_http"] = resp.status_code
+            try:
+                out["oura_rows"] = len(resp.json().get("data", []))
+            except Exception:
+                out["oura_body"] = resp.text[:200]
+
+        last = (supabase.table("oura_daily")
+                .select("day,sleep_score,rhr,total_min")
+                .order("day", desc=True).limit(5).execute().data)
+        out["db_total"] = len(supabase.table("oura_daily").select("day")
+                              .limit(200).execute().data)
+        out["db_last"] = [
+            {"day": r["day"],
+             "sleep": r.get("sleep_score") is not None,
+             "rhr": r.get("rhr") is not None,
+             "total": r.get("total_min") is not None}
+            for r in last
+        ]
+    except Exception as exc:
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
 @web_app.get("/oura/callback")
 async def oura_callback(code: str = "", error: str = ""):
     """Сюда Oura возвращает после согласия — меняем код на токены."""
