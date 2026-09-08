@@ -94,5 +94,26 @@ create table if not exists oura_daily (
   stress_high_min   int,
   recovery_high_min int,
   stress_summary    text,
+  resilience        text,        -- уровень устойчивости за две недели
+  resilience_raw    jsonb,       -- сырой ответ, на случай смены полей
   updated_at        timestamptz not null default now()
 );
+
+-- Если таблица уже была заведена раньше — доехать недостающими столбцами.
+alter table oura_daily add column if not exists resilience     text;
+alter table oura_daily add column if not exists resilience_raw jsonb;
+
+-- Метки, которые Катя ставит сама в приложении Oura: поздняя еда,
+-- активность, вино. Это единственный способ проверять причины, а не
+-- гадать по цифрам.
+create table if not exists oura_tags (
+  id          text primary key,          -- идентификатор метки из Oura
+  day         date not null,
+  start_time  timestamptz,
+  end_day     date,
+  tag_type    text,                      -- tag_type_code из Oura
+  custom_name text,
+  comment     text,
+  updated_at  timestamptz not null default now()
+);
+create index if not exists oura_tags_day_idx on oura_tags (day desc);

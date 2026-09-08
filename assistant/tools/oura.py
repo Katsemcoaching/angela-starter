@@ -71,6 +71,16 @@ PROMPT_ADDON = f"""\
   действительно доказано. Не знаешь — скажи «не знаю».
 - её ощущения важнее показаний. Цифры говорят «всё хорошо», а Катя
   чувствует, что разваливается, — права она. Верь ей, а не кольцу.
+- МЕТКИ (поле tags) — то, что Катя отметила в приложении сама: поздняя
+  еда, вино, тренировка. Это единственное, по чему причину можно
+  ПРОВЕРЯТЬ, а не угадывать. Правило прежнее: одна метка и одна ночь —
+  не доказательство. Связь называй, только если она повторилась
+  несколько раз, и говори это как наблюдение: «третий раз после поздней
+  еды ночь рваная — совпадение или нет?». Метки Катя ведёт руками, они
+  могут быть неполными: их отсутствие не значит, что ничего не было.
+- УСТОЙЧИВОСТЬ (resilience) — оценка Oura, как тело справляется с
+  нагрузкой за две недели. Это алгоритм, а не измерение: называй как
+  ярлык, выводы строй на пульсе покоя, HRV и температуре.
 - пустое поле — это НЕ ноль. Если в ответе стоит night_pending или поля
   сна пустые, значит Oura ещё не разобрала ночь (она делает это не сразу
   после пробуждения). Никогда не говори «везде нули» и «всё по нулям» —
@@ -139,6 +149,11 @@ def collect(days: int = 3) -> int:
     daily_sleep = _by_day(_get("daily_sleep", start, end))
     readiness = _by_day(_get("daily_readiness", start, end))
     stress = _by_day(_get("daily_stress", start, end))
+    # Устойчивость требует права stress. Пока не переавторизовались —
+    # Oura отвечает 401, _get гасит ошибку и возвращает пустоту.
+    resilience = _by_day(_get("daily_resilience", start, end))
+
+    _collect_tags(start, end)
 
     all_days = sorted(set(sleep) | set(daily_sleep) | set(readiness) | set(stress))
     written = 0
@@ -163,14 +178,72 @@ def collect(days: int = 3) -> int:
             "stress_high_min": _minutes(stress.get(day, {}).get("stress_high")),
             "recovery_high_min": _minutes(stress.get(day, {}).get("recovery_high")),
             "stress_summary": stress.get(day, {}).get("day_summary"),
+            "resilience": resilience.get(day, {}).get("level"),
+            "resilience_raw": resilience.get(day) or None,
         }
         try:
             supabase.table("oura_daily").upsert(row, on_conflict="day").execute()
             written += 1
         except Exception:
-            logger.exception("не удалось записать день %s", day)
+            # Столбцов устойчивости может ещё не быть — SQL в Supabase Катя
+            # запускает руками. Тогда пишем без них, чтобы не потерять день
+            # целиком. Само дочинится, как только столбцы появятся.
+            try:
+                slim = {k: v for k, v in row.items()
+                        if k not in ("resilience", "resilience_raw")}
+                supabase.table("oura_daily").upsert(slim, on_conflict="day").execute()
+                written += 1
+                logger.warning("день %s записан без устойчивости — нет столбцов", day)
+            except Exception:
+                logger.exception("не удалось записать день %s", day)
     logger.info("кольцо: записано дней — %d", written)
     return written
+
+
+def _collect_tags(start: date, end: date) -> int:
+    """Забрать метки, которые Катя ставит сама в приложении Oura.
+
+    Это единственный источник, по которому можно ПРОВЕРЯТЬ причину, а не
+    гадать: поздняя еда, вино, тренировка. Без них связь «пульс вырос —
+    потому что...» остаётся догадкой.
+
+    Своя таблица и свой try: если её ещё не завели, сбор основных данных
+    от этого падать не должен.
+    """
+    rows = _get("enhanced_tag", start, end)
+    saved = 0
+    for t in rows:
+        day = t.get("start_day")
+        if not t.get("id") or not day:
+            continue
+        try:
+            supabase.table("oura_tags").upsert({
+                "id": t["id"],
+                "day": day,
+                "start_time": t.get("start_time"),
+                "end_day": t.get("end_day"),
+                "tag_type": t.get("tag_type_code"),
+                "custom_name": t.get("custom_name"),
+                "comment": t.get("comment"),
+            }, on_conflict="id").execute()
+            saved += 1
+        except Exception:
+            logger.exception("не удалось записать метку за %s", day)
+            return saved
+    logger.info("кольцо: меток записано — %d", saved)
+    return saved
+
+
+def _tags_for(day: str) -> list[dict]:
+    """Метки за конкретный день — что Катя сама отметила."""
+    try:
+        rows = (supabase.table("oura_tags")
+                .select("tag_type,custom_name,comment,start_time")
+                .eq("day", day).execute().data)
+        return rows or []
+    except Exception:
+        logger.exception("не смогла прочитать метки за %s", day)
+        return []
 
 
 # ── Инструменты для Анджелины ────────────────────────────────────────────
@@ -332,6 +405,7 @@ def _get_oura_day(data: dict) -> dict | None:
                          "загляни позже."),
             }
     out = _with_calibration(row)
+    out["tags"] = _tags_for(row.get("day"))
     if not _has_sleep(row):
         out["night_pending"] = True
         out["note"] = (

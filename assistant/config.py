@@ -75,8 +75,11 @@ OURA_REDIRECT_URI: str = os.getenv("OURA_REDIRECT_URI", "")
 # Права: только те, что нужны для сна, пульса и стресса. Почту не просим.
 # Вынесено в переменную, чтобы добавить новое право без правки кода —
 # Oura время от времени заводит новые (stress, heart_health).
+# 8 сентября добавлен stress: без него daily_resilience отвечает 401
+# «Token is not authorized access stress scope». После смены прав нужна
+# переавторизация — старый токен новых разделов не откроет.
 OURA_SCOPES: str = os.getenv(
-    "OURA_SCOPES", "personal daily heartrate session spo2 tag workout")
+    "OURA_SCOPES", "personal daily heartrate session spo2 tag workout stress")
 
 # ── Сервер (Railway сам задаёт PORT) ─────────────────────────────────
 PORT: int = int(os.getenv("PORT", "8080"))
