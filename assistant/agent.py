@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 import anthropic
 
 from assistant import prompts
+from assistant.formatting import fix_latin_in_russian
 from assistant.knowledge import KNOWLEDGE
 from assistant.config import (
     ANTHROPIC_API_KEY,
@@ -325,7 +326,7 @@ def _extract_text(response) -> str:
             [getattr(b, "type", "?") for b in response.content],
         )
         return ""
-    text = _feminize(_strip_stamps("\n".join(parts)))
+    text = fix_latin_in_russian(_feminize(_strip_stamps("\n".join(parts))))
     if not text:
         logger.warning("текст ответа исчез после срезания пометок: %r", parts)
     return text
