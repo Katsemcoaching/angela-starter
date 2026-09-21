@@ -9,7 +9,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -33,6 +33,49 @@ def set_sender(fn) -> None:
 # второй раз незачем. Она часто пишет раньше расписания: в 6 утра или в 9
 # вечера, а в 7:00 и 22:00 получала тот же вопрос заново.
 _REFLECTION_OF = {"утренний": "утро", "вечерний": "вечер"}
+
+
+def _missing_evenings_note(today: date) -> tuple[str, list[str]]:
+    """Найти вечерние шеринги, которые пропали, и сказать об этом ОДИН раз.
+
+    Зачем это есть. 18 сентября не сохранились два шеринга подряд, бот на
+    оба ответил «Записала», и Катя узнала о пропаже только в воскресном
+    обзоре — через три дня, когда вспоминать уже поздно. Правила в промпте
+    тут не помогут: они держатся на том, что модель себя поведёт хорошо.
+    Эта проверка идёт мимо модели — просто смотрит в базу.
+
+    Почему не про вчера. Катя диктует вечерний шеринг на следующее утро
+    почти всегда, так что в 7:00 вчерашнего вечера в базе законно нет —
+    он придёт часом позже. Спрашиваем про позавчера и раньше: к этому
+    сроку шанс уже был.
+
+    Выходные пропускаем: чекинов в субботу и воскресенье нет, шерингов за
+    них Катя не ведёт, и дырами они не считаются.
+
+    Возвращает (текст для промпта, список дат). Пометку «про эту дыру
+    сказано» ставит НЕ эта функция, а _do_checkin — и только после того,
+    как сообщение реально ушло. Иначе упавшая отправка пометила бы дыру
+    закрытой, и Катя о ней никогда бы не узнала.
+    """
+    missing: list[str] = []
+    for back in range(2, 6):  # позавчера и на три дня глубже
+        day = today - timedelta(days=back)
+        if day.weekday() >= 5:
+            continue
+        day_str = day.isoformat()
+        try:
+            if db.was_ever_logged(f"дыра-вечер-{day_str}"):
+                continue
+            if db.has_reflection_today("вечер", day_str):
+                continue
+        except Exception:
+            logger.exception("не смогла проверить вечерний шеринг за %s", day_str)
+            return "", []
+        missing.append(day_str)
+    if not missing:
+        return "", []
+    logger.info("вечерние шеринги пропали: %s", ", ".join(missing))
+    return prompts.MISSING_EVENING_NOTE.format(dates=", ".join(missing)), missing
 
 
 async def _do_checkin(checkin_prompt: str, label: str) -> None:
@@ -63,6 +106,14 @@ async def _do_checkin(checkin_prompt: str, label: str) -> None:
     # плановом сообщении спрашивал о нём заново, будто не слышал.
     history = db.get_recent_memory(limit=config.HISTORY_LIMIT)
 
+    # Утром — проверка на пропавшие вечерние шеринги. Идёт мимо модели:
+    # смотрим в базу сами, чтобы дыра всплыла на следующее утро, а не в
+    # воскресном обзоре. Подробности — в _missing_evenings_note.
+    gaps: list[str] = []
+    if label == "утренний":
+        note, gaps = _missing_evenings_note(datetime.now(config.TIMEZONE).date())
+        checkin_prompt += note
+
     for attempt in range(3):
         try:
             text = await ask(
@@ -73,6 +124,14 @@ async def _do_checkin(checkin_prompt: str, label: str) -> None:
             )
             await _send(text)
             db.mark_checkin_sent(label, today)
+            # Про дыру сказано — помечаем только теперь, когда сообщение
+            # действительно ушло. Так одна пропажа называется ровно один
+            # раз, но и не теряется, если отправка сорвалась.
+            for day_str in gaps:
+                try:
+                    db.mark_checkin_sent(f"дыра-вечер-{day_str}", today)
+                except Exception:
+                    logger.exception("не смогла пометить дыру за %s", day_str)
             logger.info("чекин '%s' отправлен", label)
             return
         except Exception:

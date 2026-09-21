@@ -150,6 +150,31 @@ def get_reflections(limit: int = 7, time_of_day: str | None = None) -> list[dict
     return q.order("date", desc=True).limit(limit).execute().data
 
 
+def get_reflection(date_str: str, time_of_day: str) -> dict | None:
+    """Прочитать шеринг за конкретный день обратно из базы.
+
+    Нужна для честного подтверждения записи. 21 сентября выяснилось, что
+    Анджелина рассказывает про свою базу, не заглядывая в неё: утром
+    18-го не сохранились два шеринга подряд (вечер 17-го и утро 18-го),
+    а она на оба ответила «Записала». Потом ещё и заявила, что вечер
+    17-го «был всегда» — его не было.
+
+    Причина простая: сохранение всегда рапортовало «готово», не проверяя
+    результат. Теперь после записи строку перечитываем отсюда — и бот
+    видит, что реально легло и под какой датой.
+    """
+    rows = (
+        supabase.table("reflections")
+        .select("*")
+        .eq("date", date_str)
+        .eq("time_of_day", time_of_day)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return rows[0] if rows else None
+
+
 def has_reflection_today(time_of_day: str, date_str: str) -> bool:
     """Прислала ли Катя шеринг за этот день сама, до планового чекина.
 
@@ -184,3 +209,22 @@ def was_checkin_sent(label: str, date_str: str) -> bool:
 
 def mark_checkin_sent(label: str, date_str: str) -> None:
     supabase.table("checkin_log").insert({"label": label, "date": date_str}).execute()
+
+
+def was_ever_logged(label: str) -> bool:
+    """Была ли такая пометка когда-либо — без привязки к дню.
+
+    Нужна, чтобы про одну и ту же пропажу сказать РОВНО ОДИН РАЗ.
+    `was_checkin_sent` для этого не годится: он спрашивает про сегодня, и
+    незакрытая дыра всплывала бы каждое утро. Катя такое не выносит —
+    правило «напомнить один раз» записано в `ai-clone/feedback.md`.
+    """
+    rows = (
+        supabase.table("checkin_log")
+        .select("id")
+        .eq("label", label)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return len(rows) > 0
