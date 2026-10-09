@@ -48,6 +48,14 @@ _MAX_TOOL_RESULT_CHARS = 6000  # обрезаем огромные ответы 
 
 def _messages_create(**kwargs):
     """client.messages.create со вторым слоем ретраев на затяжной перегруз."""
+    # Часовой кэш (ttl "1h" в cache_control) включается бета-заголовком.
+    # Без него Anthropic молча вернётся к обычным пяти минутам. 9 октября
+    # 2026 перешли с 5 минут на час: Катя пишет вспышками в течение дня, и
+    # на пятиминутном окне кэш каждый раз остывал между вспышками, а прогрев
+    # оплачивался заново. Разбор — angelina/состояние.md, «Про кэш».
+    headers = {"anthropic-beta": "extended-cache-ttl-2025-04-11"}
+    headers.update(kwargs.pop("extra_headers", {}) or {})
+    kwargs["extra_headers"] = headers
     last_exc = None
     for attempt in range(3):
         try:
@@ -104,9 +112,12 @@ def _system_blocks(module_addons: str, extra_system: str) -> list[dict]:
         volatile += "\n\n" + extra_system
 
     return [
-        # Статичный блок кэшируется — на каждом раунде инструментов он берётся
-        # из кэша, а не пересчитывается. Время идёт ПОСЛЕ точки кэширования.
-        {"type": "text", "text": static, "cache_control": {"type": "ephemeral"}},
+        # Статичный блок кэшируется на ЧАС (ttl "1h") — на каждом раунде
+        # инструментов он берётся из кэша, а не пересчитывается. Время идёт
+        # ПОСЛЕ точки кэширования. Час вместо пяти минут — чтобы кэш держался
+        # между вспышками сообщений Кати в течение дня (9 октября 2026).
+        {"type": "text", "text": static,
+         "cache_control": {"type": "ephemeral", "ttl": "1h"}},
         {"type": "text", "text": volatile},
     ]
 
@@ -117,7 +128,7 @@ def _cached_tools(tools: list[dict]) -> list[dict]:
         return tools
     cached = list(tools)
     last = dict(cached[-1])
-    last["cache_control"] = {"type": "ephemeral"}
+    last["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
     cached[-1] = last
     return cached
 
