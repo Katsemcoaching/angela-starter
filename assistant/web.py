@@ -58,6 +58,38 @@ async def oura_auth_start():
     )
 
 
+@web_app.get("/oura/export")
+async def oura_export(start: str = "2026-08-01", end: str = ""):
+    """ВРЕМЕННАЯ выгрузка всех данных кольца — для передачи специалисту.
+
+    Берём напрямую из Oura, а не из нашей базы: в базе лежит только то,
+    что нужно коучу, а врачу важны ещё кислород, дыхание и активность.
+
+    ⚠️ Отдаёт личные медицинские данные. Заведена 7 ноября 2026 с ведома
+    Кати на несколько минут и удаляется сразу после выгрузки. Если ты
+    это читаешь, а эндпойнт ещё жив — значит его забыли убрать, убери.
+    """
+    import asyncio
+    from datetime import date
+
+    if not config.ENABLE_OURA:
+        return {"error": "модуль кольца выключен"}
+
+    from assistant.tools.oura import _get
+
+    end_date = date.fromisoformat(end) if end else date.today()
+    start_date = date.fromisoformat(start)
+
+    sections = ("daily_sleep", "sleep", "daily_readiness", "daily_activity",
+                "daily_stress", "daily_spo2", "daily_resilience",
+                "daily_cardiovascular_age", "vO2_max", "enhanced_tag")
+    out: dict = {"start": start_date.isoformat(), "end": end_date.isoformat()}
+    for name in sections:
+        rows = await asyncio.to_thread(_get, name, start_date, end_date)
+        out[name] = rows
+    return out
+
+
 @web_app.get("/oura/status")
 async def oura_status():
     """Диагностика цепочки кольца: токен → Oura → база.
